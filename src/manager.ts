@@ -81,6 +81,55 @@ export interface OpenOptions {
 
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/
 
+/** State of a name that is already registered. */
+export interface ExistingInstance {
+  /** Whether its browser still answers. */
+  alive: boolean
+  /** Profile it runs on, or null when throwaway. */
+  profile: string | null
+}
+
+/** What opening a name should do before any browser work happens. */
+export type OpenDecision =
+  /** No instance holds the name. */
+  | { kind: 'create' }
+  /** The instance is gone; drop its record and start a new one. */
+  | { kind: 'replace' }
+  /** A headed instance is open; hand it back. */
+  | { kind: 'reuse' }
+  /** A headless instance holds the name; headless names are exclusive. */
+  | { kind: 'duplicate' }
+  /** The open instance runs on another profile than the caller named explicitly. */
+  | { kind: 'profile-conflict'; profile: string | null }
+
+/**
+ * Decide what an open request does with a name that may already be taken.
+ *
+ * Headed browsers are shared: the same name hands back the running browser, so
+ * sessions split one window into tabs. Headless browsers are exclusive to their
+ * instance: a live name is a conflict and the caller must pick another.
+ * @param existing - instance already registered under the name, when any.
+ * @param options - headless choice and the profile the caller asked for.
+ * @param defaultProfile - profile headed instances use when none is named.
+ * @returns the action to take.
+ */
+export function decideOpen(
+  existing: ExistingInstance | undefined,
+  options: Pick<OpenOptions, 'headless' | 'profile' | 'ephemeral'>,
+  defaultProfile: string,
+): OpenDecision {
+  if (existing === undefined) return { kind: 'create' }
+  if (!existing.alive) return { kind: 'replace' }
+  if (options.headless) return { kind: 'duplicate' }
+  const requestedProfile = options.profile?.trim() ?? ''
+  const explicit = options.ephemeral === true || requestedProfile !== ''
+  if (!explicit) return { kind: 'reuse' }
+  const requested = options.ephemeral === true
+    ? null
+    : requestedProfile === '' ? defaultProfile : requestedProfile
+  return existing.profile === requested ? { kind: 'reuse' } : { kind: 'profile-conflict', profile: existing.profile }
+}
+
 /** Outcome of an open request. */
 export type OpenResult = {
   /** The instance to use; the already-open one when the name was taken. */
@@ -99,20 +148,46 @@ export class ChromeManager {
   constructor(private readonly options: ManagerOptions) {}
 
   /**
-   * Open a browser. A name that is already open returns that instance, so
-   * several sessions reach one browser and split it into tabs.
+   * Open a browser.
+   *
+   * A headed name that is already open returns that instance, so several
+   * sessions reach one browser and split it into tabs. A headless name is
+   * exclusive: a live one is refused and the caller must pick another.
    * @param name - agent-chosen instance name.
    * @param options - headless choice, profile choice, and owning agent.
    * @returns the instance and whether it was already open.
-   * @throws {ChromeError} `profile_busy` when this name is open on a different profile than
-   *   the caller explicitly asked for, otherwise startup failures.
+   * @throws {ChromeError} `instance_exists` for a live headless name, `profile_busy` when a
+   *   headed name is open on another profile than the caller explicitly asked for.
    */
   async open(name: string, options: OpenOptions): Promise<OpenResult> {
     if (!NAME_PATTERN.test(name)) {
       throw new ChromeError('instance_exists', `invalid instance name "${name}"; use letters, digits, - and _ (max 32)`)
     }
-    const existing = await this.reusable(name, options)
-    if (existing !== undefined) return { instance: existing, reused: true }
+    const decision = await this.decide(name, options)
+    if (decision.kind === 'duplicate') {
+      throw new ChromeError(
+        'instance_exists',
+        `headless browser "${name}" is already open; headless instances are not shared, pick another name`,
+      )
+    }
+    if (decision.kind === 'profile-conflict') {
+      throw new ChromeError(
+        'profile_busy',
+        `browser "${name}" is already open on profile "${decision.profile ?? 'ephemeral'}"; close it, or pick another name`,
+      )
+    }
+    if (decision.kind === 'reuse') {
+      const existing = this.instances.get(name)
+      if (existing !== undefined) return { instance: existing, reused: true }
+    }
+    if (decision.kind === 'replace') {
+      const dead = this.instances.get(name)
+      if (dead !== undefined) {
+        this.options.logger.info(`dsh-chrome: replacing browser "${name}", its process is gone`)
+        this.forget(dead)
+        await dead.stop().catch(() => {})
+      }
+    }
 
     const choice = this.profileChoice(options)
     const profileDir = this.profileDir(name, choice)
@@ -317,42 +392,33 @@ export class ChromeManager {
   }
 
   /**
-   * Return an instance already open under this name, or drop the dead one.
-   *
-   * Opening the same name again is how several sessions reach one browser, so
-   * a live instance wins over the requested options; only a profile the caller
-   * named explicitly and that differs is a real conflict.
+   * Read what opening this name should do.
    * @param name - instance name the caller wants.
-   * @param options - requested profile choice.
-   * @returns the live instance, or undefined when the caller must start a new one.
-   * @throws {ChromeError} `profile_busy` when the caller named a different profile.
+   * @param options - requested headless and profile choice.
+   * @returns the decision from {@link decideOpen}.
    */
-  private async reusable(name: string, options: OpenOptions): Promise<BrowserInstance | undefined> {
+  private async decide(name: string, options: OpenOptions): Promise<OpenDecision> {
     const existing = this.instances.get(name)
-    if (existing === undefined) return undefined
-    if (!await existing.isAlive()) {
-      this.options.logger.info(`dsh-chrome: replacing browser "${name}", its process is gone`)
-      this.forget(existing)
-      await existing.stop().catch(() => {})
-      return undefined
-    }
-    const explicit = options.ephemeral === true || (options.profile?.trim() ?? '') !== ''
-    const requested = options.ephemeral === true
-      ? null
-      : (options.profile?.trim() ?? '') === '' ? this.options.defaultProfile : options.profile?.trim() ?? ''
-    if (explicit && existing.profile !== requested) {
-      throw new ChromeError(
-        'profile_busy',
-        `browser "${name}" is already open on profile "${existing.profile ?? 'ephemeral'}"; close it, or pick another name`,
-      )
-    }
-    return existing
+    if (existing === undefined) return { kind: 'create' }
+    return decideOpen(
+      { alive: await existing.isAlive(), profile: existing.profile },
+      options,
+      this.options.defaultProfile,
+    )
   }
 
-  /** Resolve the requested profile choice. */
+  /**
+   * Resolve which profile a new instance runs on.
+   *
+   * Headless instances are isolated unless the caller names a profile, so they
+   * never collide with the headed browser and its logins.
+   * @param options - requested headless and profile choice.
+   * @returns the profile to use.
+   */
   private profileChoice(options: OpenOptions): ProfileChoice {
     if (options.ephemeral === true) return { kind: 'ephemeral' }
     const requested = options.profile?.trim()
+    if ((requested === undefined || requested === '') && options.headless) return { kind: 'ephemeral' }
     const name = requested === undefined || requested === '' ? this.options.defaultProfile : requested
     if (!NAME_PATTERN.test(name)) {
       throw new ChromeError('instance_exists', `invalid profile name "${name}"; use letters, digits, - and _ (max 32)`)

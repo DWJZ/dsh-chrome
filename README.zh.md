@@ -13,7 +13,9 @@ kind: "plugin-reference"
 
 默认开带界面的那种（方便人登录），并且共享同一个 profile：除非用 `profile` 指定另一个、或用 `ephemeral: true` 表示不用 profile，否则都落在默认 profile 上。Chrome 一个 profile 目录同时只能有一个进程，所以一个 profile 在同一时刻只支撑一个运行中的实例；登录态在前后两次开的实例之间是通的。
 
-不带名字时开的就是 `default`，所以每个会话只要调 `chrome_browser_open` 就落到同一个浏览器上，再各自分 tab 用。同名且已经开着时，直接把这个实例返回（`reused: true`），不报错；只有当调用方显式点名了另一个 profile、而它和已开的那个不一致时才会被拒绝，并告诉你是谁占着。
+不带名字时开的就是 `default`，所以每个会话只要调 `chrome_browser_open` 就落到同一个浏览器上，再各自分 tab 用。带界面的同名实例已经开着时，直接把它返回（`reused: true`），不报错；只有当调用方显式点名了另一个 profile、而它和已开的那个不一致时才会被拒绝，并告诉你是谁占着。
+
+无头实例是按实例隔离的：`name` 必填，profile 默认一次性（除非用 `profile` 点名），同名已开会被拒绝，避免两个调用方悄悄共用一个。带界面的实例保持共享 profile 与同名复用。
 
 tab 按 agent 租借。多个会话可以同时操作同一个浏览器，但一个 tab 在同一时刻只归一个会话，直到它释放、关闭该 tab，或者会话结束。工具调用超时只让那一次调用失败，不会把 tab 收走。
 
@@ -48,7 +50,7 @@ pnpm dsh plugin --profile web add link:/path/to/dsh-chrome
 | 工具 | 用途 |
 |---|---|
 | `chrome_browser_list` | 列出实例、端口、tab 数与租约归属 |
-| `chrome_browser_open` | 开 `default` 或指定名字的实例；同名已开则原样返回，`profile` 指定共享 profile，`ephemeral` 用一次性 profile |
+| `chrome_browser_open` | 开共享的 GUI 浏览器（`default`，已开则复用）或指定名字的无头实例（名字必填、互斥）；`profile` 指定共享 profile，`ephemeral` 用一次性 profile |
 | `chrome_browser_close` | 关实例并释放它的租约 |
 | `chrome_list_tabs` | 列出 tab 的 id、标题、URL 与占用者 |
 | `chrome_search_tabs` | 按标题、URL 或两者过滤 tab |

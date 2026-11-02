@@ -13,7 +13,9 @@ English | [中文](README.zh.md)
 
 Instances start headed by default so a person can sign in, and share one profile: every instance uses the default profile unless it asks for another with `profile` or for none with `ephemeral: true`. Chrome allows one process per profile directory, so a profile backs one running browser at a time, and logins carry across instances opened one after another.
 
-Opening without a name targets `default`, so every session that just calls `chrome_browser_open` reaches the same browser and splits it into tabs. Opening a name that is already open returns that instance with `reused: true` instead of failing; only a profile the caller named explicitly and that differs from the open one is refused, with the name of the holder.
+Opening without a name targets `default`, so every session that just calls `chrome_browser_open` reaches the same browser and splits it into tabs. A headed name that is already open returns that instance with `reused: true` instead of failing; only a profile the caller named explicitly and that differs from the open one is refused, with the name of the holder.
+
+A headless browser is isolated to its instance: `name` is required, the profile is throwaway unless `profile` names one, and a name that is already open is refused so two callers cannot silently share one. Headed browsers keep the shared profile and the reuse behavior.
 
 Tabs are leased per agent. Several sessions may drive the same browser at once, but one tab belongs to one session until it releases it, closes it, or its session ends. A tool call that times out fails that call only; it never takes the tab away.
 
@@ -48,7 +50,7 @@ Then add the row to the profile's `cordis.patch.yml`:
 | Tool | Purpose |
 |---|---|
 | `chrome_browser_list` | Instances, ports, tab counts, and lease owners |
-| `chrome_browser_open` | Open `default` or a named instance; an open name is returned as-is, `profile` picks a shared profile, `ephemeral` uses a throwaway one |
+| `chrome_browser_open` | Open the shared GUI browser (`default`, reused when open) or a named headless instance (name required, exclusive); `profile` picks a shared profile, `ephemeral` a throwaway one |
 | `chrome_browser_close` | Stop an instance and release its leases |
 | `chrome_list_tabs` | Tabs with ids, titles, URLs, and owners |
 | `chrome_search_tabs` | Filter tabs by title, URL, or both |

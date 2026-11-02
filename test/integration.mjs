@@ -48,19 +48,17 @@ const html = 'data:text/html,<html><body><input id=i><button id=b onclick="docum
 const manager = makeManager()
 try {
   // --- instances share one profile by default ------------------------------
-  const { instance: one } = await manager.open('one', { headless: true, ownerAgentId: 'agent-a' })
+  const { instance: one } = await manager.open('one', { headless: true, profile: 'default', ownerAgentId: 'agent-a' })
   assert.equal(one.profile, 'default')
   assert.equal(one.profileDir, sharedDir)
-  const { instance: two } = await manager.open('two', { headless: true, ephemeral: true, ownerAgentId: 'agent-b' })
+  const { instance: two } = await manager.open('two', { headless: true, ownerAgentId: 'agent-b' })
   assert.equal(two.profile, null)
   assert.equal(two.profileDir, join(root, 'ephemeral', 'two'))
 
-  // Opening an already-open name hands back that instance; sessions share it.
-  const again = await manager.open('one', { headless: true })
-  assert.equal(again.reused, true, 'the second open reuses the instance')
-  assert.equal(again.instance, one, 'the second open returns the same instance')
+  // Headless names are exclusive: the same name is refused, not shared.
+  await assert.rejects(manager.open('one', { headless: true }), (error) => error.code === 'instance_exists')
   // Chrome allows one process per profile directory.
-  await assert.rejects(manager.open('three', { headless: true }), (error) => error.code === 'profile_busy')
+  await assert.rejects(manager.open('three', { headless: true, profile: 'default' }), (error) => error.code === 'profile_busy')
   assert.equal((await manager.list()).length, 2)
 
   // --- leases: one owner per tab -------------------------------------------
@@ -107,7 +105,7 @@ try {
   assert.equal((await manager.list()).length, 0)
 
   // --- another instance finds the same profile and its logins --------------
-  const { instance: three } = await manager.open('three', { headless: true })
+  const { instance: three } = await manager.open('three', { headless: true, profile: 'default' })
   assert.equal(three.profileDir, sharedDir)
   assert.equal((await three.pages()).length >= 1, true)
 
@@ -117,7 +115,7 @@ try {
   process.kill(state.pid, 'SIGKILL')
   for (let attempt = 0; attempt < 50 && isAlive(state.pid); attempt += 1) await sleep(100)
   assert.equal(manager.require('three').name, 'three')
-  const { instance: revived } = await manager.open('three', { headless: true })
+  const { instance: revived } = await manager.open('three', { headless: true, profile: 'default' })
   assert.equal(revived.profileDir, sharedDir, 'the recovered instance keeps the profile')
   assert.ok((await revived.pages()).length >= 1, 'the recovered instance has a page')
   await manager.close('three')

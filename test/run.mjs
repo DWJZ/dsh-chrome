@@ -57,3 +57,25 @@ import { LeaseBook } from '../src/leases.ts'
 }
 
 console.log('unit tests passed')
+
+// Opening a name: headed browsers are shared, headless ones are exclusive.
+{
+  const { decideOpen } = await import('../src/manager.ts')
+  const headed = { headless: false }
+  const headless = { headless: true }
+  assert.deepEqual(decideOpen(undefined, headed, 'default'), { kind: 'create' })
+  assert.deepEqual(decideOpen({ alive: false, profile: 'default' }, headless, 'default'), { kind: 'replace' })
+  assert.deepEqual(decideOpen({ alive: true, profile: null }, headless, 'default'), { kind: 'duplicate' })
+  assert.deepEqual(decideOpen({ alive: true, profile: 'default' }, headed, 'default'), { kind: 'reuse' })
+  assert.deepEqual(decideOpen({ alive: true, profile: 'default' }, { headless: false, profile: 'default' }, 'default'), { kind: 'reuse' })
+  assert.deepEqual(
+    decideOpen({ alive: true, profile: 'default' }, { headless: false, profile: 'work' }, 'default'),
+    { kind: 'profile-conflict', profile: 'default' },
+  )
+  assert.deepEqual(
+    decideOpen({ alive: true, profile: 'default' }, { headless: false, ephemeral: true }, 'default'),
+    { kind: 'profile-conflict', profile: 'default' },
+  )
+}
+
+console.log('decideOpen tests passed')

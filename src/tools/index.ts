@@ -101,7 +101,7 @@ export function registerTools(ctx: { tools: { register(definition: ToolDefinitio
 
   ctx.tools.register(defineTool({
     name: 'chrome_browser_open',
-    description: 'Open a browser. Without a name every session reaches the same instance, so callers split it into tabs instead of starting browsers. Opening an already-open name returns that instance with reused: true. Instances share one profile by default, and a profile can only back one running browser because Chrome allows one process per profile directory.',
+    description: 'Open a browser. Without a name you get the shared GUI browser at "default": every session that omits the name reaches the same instance and splits it into tabs, and an already-open name is returned with reused: true. A headless browser is isolated to its instance, so it needs an explicit name; a name that is already open is refused instead of shared.',
     parameters: {
       name: { type: 'string', description: `Instance name (letters, digits, - and _). Defaults to "${DEFAULT_BROWSER}", which is also the browser every other tool uses when none is named.` },
       headless: { type: 'boolean', description: 'Start without a window. Defaults to false (headed).' },
@@ -111,7 +111,14 @@ export function registerTools(ctx: { tools: { register(definition: ToolDefinitio
     output: JSON_OUTPUT,
     async execute(args, exec) {
       const headless = args.headless ?? false
-      const name = args.name?.trim() === undefined || args.name.trim() === '' ? DEFAULT_BROWSER : args.name.trim()
+      const requested = args.name?.trim() ?? ''
+      if (headless && requested === '') {
+        throw new ChromeError(
+          'instance_name_required',
+          'headless browsers are not shared; pass an explicit name, or omit headless to use the shared GUI browser',
+        )
+      }
+      const name = requested === '' ? DEFAULT_BROWSER : requested
       const { instance, reused } = await manager.open(name, {
         headless,
         ...(args.profile === undefined ? {} : { profile: args.profile }),
