@@ -67,6 +67,7 @@ Then add the row to the profile's `cordis.patch.yml`:
 - Launch uses `--no-startup-window` and creates the first page through CDP with `background: true`, so the browser never takes focus.
 - Chrome starts with `--disable-blink-features=AutomationControlled`: an open DevTools port otherwise makes pages report `navigator.webdriver`, and sign-in providers reject such a browser.
 - Headless instances close when their turn ends by default; a throwaway profile is deleted with them.
+- An instance another session is still using stays open past its owner's turn: a tab held elsewhere outranks the close policy, and the instance is collected once nobody holds a tab.
 - Plugin load reaps headless profiles a previous host left behind; headed profiles are kept for their logins.
 - If the MCP server dies, the next call reports `browser_down` because page ids changed, and later calls reconnect.
 - Each instance runs one `chrome-devtools-mcp` process, mounted with `--experimentalStructuredContent` and `--workspace=<screenshotDir>`.

@@ -15,9 +15,10 @@ import { ChromeManager } from '../src/manager.ts'
 
 const logger = { info: () => {}, warn: (message) => console.warn(`[warn] ${message}`) }
 const root = mkdtempSync(join(tmpdir(), 'dsh-chrome-it-'))
+const aliveAgents = new Set(['agent-a', 'agent-b'])
 const sharedDir = join(root, 'profiles', 'default')
 
-function makeManager(isAlive = () => true) {
+function makeManager(isAlive = (id) => aliveAgents.has(id)) {
   return new ChromeManager({
     profileRoot: root,
     defaultProfile: 'default',
@@ -98,7 +99,7 @@ try {
   const twoDir = join(root, 'ephemeral', 'two')
   assert.ok(existsSync(twoDir), 'throwaway profile exists while open')
   const closed = await manager.closeOwnedBy('agent-b', ['turn'])
-  assert.deepEqual(closed, ['two'])
+  assert.deepEqual(closed, { closed: ['two'], kept: [] })
   assert.ok(!existsSync(twoDir), 'throwaway profile removed on close')
 
   assert.equal(await manager.close('one'), true)
@@ -142,6 +143,19 @@ try {
   const reapedAgain = await nextHost.reapOrphans()
   assert.deepEqual(reapedAgain, ['marker-only'])
   assert.ok(!existsSync(markerOnly), 'marker-only profile removed')
+
+  // --- an instance another session is using survives its owner's turn end ---
+  const { instance: shared } = await manager.open('shared', { headless: true, ownerAgentId: 'agent-a' })
+  const sharedTab = await openTab(shared, html)
+  shared.leases.claim(sharedTab.pageId, 'agent-b')
+  const kept = await manager.closeOwnedBy('agent-a', ['turn'])
+  assert.deepEqual(kept, { closed: [], kept: ['shared'] }, 'a foreign lease keeps the browser open')
+
+  // Once that session is gone too, the abandoned instance is collected.
+  manager.releaseAgent('agent-b')
+  aliveAgents.delete('agent-a')
+  assert.deepEqual(await manager.closeAbandoned(), ['shared'])
+  assert.deepEqual((await manager.list()).map((summary) => summary.name), ['ghost'], 'only the ownerless ghost remains')
 
   await nextHost.dispose()
 

@@ -90,15 +90,27 @@ export function apply(ctx: PluginContext, config: Config = {}): void {
 
   ctx.on('agent/disposed', ({ agent }) => {
     manager.releaseAgent(agent.id)
-    void manager.closeOwnedBy(agent.id, ['turn', 'session']).catch((error: unknown) => {
-      ctx.logger.warn(`dsh-chrome: closing browsers of agent ${agent.id} failed: ${String(error)}`)
-    })
+    void manager.closeOwnedBy(agent.id, ['turn', 'session'])
+      .then(async ({ closed, kept }) => {
+        if (kept.length > 0) ctx.logger.info(`dsh-chrome: keeping ${kept.join(', ')} open, other sessions hold tabs`)
+        const abandoned = await manager.closeAbandoned()
+        const stopped = [...closed, ...abandoned]
+        if (stopped.length > 0) ctx.logger.info(`dsh-chrome: closed browsers ${stopped.join(', ')}`)
+      })
+      .catch((error: unknown) => {
+        ctx.logger.warn(`dsh-chrome: closing browsers of agent ${agent.id} failed: ${String(error)}`)
+      })
   })
 
   ctx.on('agent/turn-stopping', ({ agent }) => {
-    void manager.closeOwnedBy(agent.id, ['turn']).catch((error: unknown) => {
-      ctx.logger.warn(`dsh-chrome: closing turn-scoped browsers failed: ${String(error)}`)
-    })
+    void manager.closeOwnedBy(agent.id, ['turn'])
+      .then(({ closed, kept }) => {
+        if (kept.length > 0) ctx.logger.info(`dsh-chrome: keeping ${kept.join(', ')} open, other sessions hold tabs`)
+        if (closed.length > 0) ctx.logger.info(`dsh-chrome: closed turn-scoped browsers ${closed.join(', ')}`)
+      })
+      .catch((error: unknown) => {
+        ctx.logger.warn(`dsh-chrome: closing turn-scoped browsers failed: ${String(error)}`)
+      })
   })
 }
 

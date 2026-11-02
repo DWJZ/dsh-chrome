@@ -189,20 +189,60 @@ export class ChromeManager {
 
   /**
    * Stop every instance an agent created under a given close policy.
+   *
+   * An instance another session is still using stays open: a lease held by
+   * someone else outranks the owner's close policy. It is closed later by
+   * {@link closeAbandoned} once that session is gone and its leases are freed.
    * @param agentId - owning agent.
    * @param policies - close policies to apply.
-   * @returns names of the stopped instances.
+   * @returns names stopped and names kept because another session holds a tab.
    */
-  async closeOwnedBy(agentId: string, policies: readonly CloseOn[]): Promise<string[]> {
+  async closeOwnedBy(agentId: string, policies: readonly CloseOn[]): Promise<{ closed: string[]; kept: string[] }> {
     const closed: string[] = []
+    const kept: string[] = []
     for (const [name, instance] of [...this.instances]) {
       if (instance.ownerAgentId !== agentId) continue
       if (!policies.includes(instance.closeOn)) continue
+      if (this.hasForeignLease(instance)) {
+        kept.push(name)
+        continue
+      }
+      this.forget(instance)
+      await instance.stop()
+      closed.push(name)
+    }
+    return { closed, kept }
+  }
+
+  /**
+   * Stop on-demand instances whose owner is gone and whose tabs nobody holds.
+   *
+   * This is what finally closes an instance `closeOwnedBy` kept alive for
+   * another session, after that session released its tabs.
+   * @returns names of the stopped instances.
+   */
+  async closeAbandoned(): Promise<string[]> {
+    const closed: string[] = []
+    for (const [name, instance] of [...this.instances]) {
+      if (instance.closeOn === 'manual') continue
+      const owner = instance.ownerAgentId
+      if (owner === undefined) continue
+      if (this.options.isAgentAlive(owner) !== false) continue
+      if (this.hasForeignLease(instance)) continue
       this.forget(instance)
       await instance.stop()
       closed.push(name)
     }
     return closed
+  }
+
+  /**
+   * Whether a session other than the instance's owner still holds a tab.
+   * @param instance - instance whose leases are inspected.
+   * @returns true when some other caller owns a lease.
+   */
+  private hasForeignLease(instance: BrowserInstance): boolean {
+    return instance.leases.entries().some(([, lease]) => lease.agentId !== instance.ownerAgentId)
   }
 
   /**
