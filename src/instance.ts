@@ -4,6 +4,7 @@
  * @module dsh-chrome/instance
  */
 
+import { rm } from 'node:fs/promises'
 import { ensureChrome } from './chrome/process.ts'
 import type { LaunchLogger, RunningChrome } from './chrome/process.ts'
 import { ChromeError } from './errors.ts'
@@ -80,17 +81,13 @@ export class BrowserInstance {
   /** Start Chrome and the MCP engine when they are not running yet. */
   async start(): Promise<void> {
     if (this.engine !== undefined) return
-    this.chrome = await ensureChrome({
+    this.chrome ??= await ensureChrome({
       executablePath: this.options.executablePath,
       profileDir: this.options.profileDir,
       headless: this.options.headless,
       extraArgs: this.options.chromeArgs,
     }, this.options.logger)
-    this.engine = await McpEngine.start({
-      port: this.chrome.endpoint.port,
-      timeoutMs: this.options.toolCallTimeoutMs,
-      workspaceDirs: this.options.workspaceDirs,
-    })
+    await this.startEngine()
   }
 
   /** Whether both processes are up. */
@@ -123,9 +120,33 @@ export class BrowserInstance {
    */
   async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpResult> {
     const engine = this.requireEngine()
-    return engine.call(name, args, {
-      ...(signal === undefined ? {} : { signal }),
+    try {
+      return await engine.call(name, args, {
+        ...(signal === undefined ? {} : { signal }),
+        timeoutMs: this.options.toolCallTimeoutMs,
+      })
+    } catch (error) {
+      if (!isTransportFailure(error)) throw error
+      // The server process died: restart it for later calls, but this call's
+      // page ids no longer describe the same tabs, so report rather than retry.
+      await engine.close().catch(() => {})
+      this.engine = undefined
+      this.leases.prune([])
+      await this.startEngine().catch(() => {})
+      throw new ChromeError(
+        'browser_down',
+        `browser "${this.options.name}": the MCP server restarted, so page ids changed; call chrome_list_tabs again`,
+      )
+    }
+  }
+
+  /** Start the MCP engine against the running browser. */
+  private async startEngine(): Promise<void> {
+    if (this.chrome === undefined) return
+    this.engine = await McpEngine.start({
+      port: this.chrome.endpoint.port,
       timeoutMs: this.options.toolCallTimeoutMs,
+      workspaceDirs: this.options.workspaceDirs,
     })
   }
 
@@ -142,7 +163,7 @@ export class BrowserInstance {
     return current
   }
 
-  /** Stop the MCP engine and the browser process. */
+  /** Stop the MCP engine and the browser process; headless profiles are discarded. */
   async stop(): Promise<void> {
     this.leases.prune([])
     const engine = this.engine
@@ -151,6 +172,7 @@ export class BrowserInstance {
     this.chrome = undefined
     if (engine !== undefined) await engine.close()
     if (chrome !== undefined) await chrome.close()
+    if (this.options.headless) await rm(this.options.profileDir, { recursive: true, force: true })
   }
 
   private requireEngine(): McpEngine {
@@ -159,4 +181,16 @@ export class BrowserInstance {
     }
     return this.engine
   }
+}
+
+/**
+ * Whether a failed call means the MCP server process is gone rather than the
+ * browser rejecting the operation.
+ * @param error - any thrown value.
+ * @returns true when the transport, not the tool, failed.
+ */
+function isTransportFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if (error instanceof ChromeError) return false
+  return /connection closed|not connected|transport closed|socket hang up|EPIPE|ECONNRESET/i.test(error.message)
 }

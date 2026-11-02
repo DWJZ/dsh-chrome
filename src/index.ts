@@ -63,6 +63,12 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
 
   registerTools(ctx, { manager, screenshotDir })
 
+  void manager.reapOrphans().then((reaped) => {
+    if (reaped.length > 0) ctx.logger.info(`dsh-chrome: cleaned up ${reaped.length} leftover headless browser(s): ${reaped.join(', ')}`)
+  }, (error: unknown) => {
+    ctx.logger.warn(`dsh-chrome: leftover headless cleanup failed: ${String(error)}`)
+  })
+
   ctx.effect(() => async () => {
     await manager.dispose()
   }, 'dsh-chrome.instances')

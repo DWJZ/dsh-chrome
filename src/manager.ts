@@ -4,10 +4,13 @@
  * @module dsh-chrome/manager
  */
 
+import type { Dirent } from 'node:fs'
+import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ChromeError } from './errors.ts'
 import { BrowserInstance } from './instance.ts'
 import type { CloseOn } from './config.ts'
+import { readInstanceState, terminateProcess } from './chrome/process.ts'
 import type { LaunchLogger } from './chrome/process.ts'
 import type { AgentLiveness } from './leases.ts'
 
@@ -160,6 +163,33 @@ export class ChromeManager {
    */
   releaseAgent(agentId: string): void {
     for (const instance of this.instances.values()) instance.leases.releaseAgent(agentId)
+  }
+
+  /**
+   * Stop headless browsers left behind by a previous host process.
+   *
+   * A headless profile is on demand by definition, so at plugin load no live
+   * agent can own one.
+   * @returns names of the profiles that were cleaned up.
+   */
+  async reapOrphans(): Promise<string[]> {
+    const reaped: string[] = []
+    let entries: Dirent[]
+    try {
+      entries = await readdir(this.options.profileRoot, { withFileTypes: true })
+    } catch {
+      return reaped
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || this.instances.has(entry.name)) continue
+      const dir = join(this.options.profileRoot, entry.name)
+      const state = await readInstanceState(dir)
+      if (state === undefined || !state.headless) continue
+      await terminateProcess(state.pid)
+      await rm(dir, { recursive: true, force: true })
+      reaped.push(entry.name)
+    }
+    return reaped
   }
 
   /**

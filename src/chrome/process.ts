@@ -48,7 +48,8 @@ export interface LaunchLogger {
   warn(message: string): void
 }
 
-interface InstanceState {
+/** Persisted identity of the browser started for one profile. */
+export interface InstanceState {
   pid: number
   startedAt: string
   headless: boolean
@@ -66,7 +67,7 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function readState(profileDir: string): Promise<InstanceState | undefined> {
+export async function readInstanceState(profileDir: string): Promise<InstanceState | undefined> {
   try {
     const text = await readFile(join(profileDir, STATE_FILE), 'utf8')
     const parsed = JSON.parse(text) as Partial<InstanceState>
@@ -87,7 +88,7 @@ async function readState(profileDir: string): Promise<InstanceState | undefined>
  * @returns the running browser, or undefined when none answers.
  */
 export async function adoptChrome(profileDir: string): Promise<RunningChrome | undefined> {
-  const state = await readState(profileDir)
+  const state = await readInstanceState(profileDir)
   if (state === undefined) return undefined
   if (!isAlive(state.pid)) {
     await rm(join(profileDir, STATE_FILE), { force: true })
@@ -104,13 +105,13 @@ function runningChrome(pid: number, endpoint: DevToolsEndpoint, profileDir: stri
     pid,
     endpoint,
     async close(): Promise<void> {
-      await stopProcess(pid)
+      await terminateProcess(pid)
       await forgetChrome(profileDir)
     },
   }
 }
 
-async function stopProcess(pid: number): Promise<void> {
+export async function terminateProcess(pid: number): Promise<void> {
   if (!isAlive(pid)) return
   try {
     process.kill(pid, 'SIGTERM')
@@ -165,7 +166,7 @@ export async function ensureChrome(spec: ChromeLaunchSpec, logger: LaunchLogger)
     return await probeDevTools(published.port)
   }, STARTUP_TIMEOUT_MS)
   if (endpoint === undefined) {
-    await stopProcess(pid)
+    await terminateProcess(pid)
     throw new ChromeError('browser_down', `Chrome did not publish a DevTools endpoint within ${STARTUP_TIMEOUT_MS}ms`)
   }
 
