@@ -48,10 +48,5 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.0"
   },
-  "packageManager": "pnpm@11.28.5",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  }
+  "packageManager": "pnpm@11.28.5"
 }

@@ -1,0 +1,6 @@
+packages:
+  - .
+
+# pnpm 11 reads build approvals from this file; the same key in package.json is ignored.
+allowBuilds:
+  esbuild: true
