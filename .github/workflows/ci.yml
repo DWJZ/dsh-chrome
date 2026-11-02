@@ -37,3 +37,28 @@ jobs:
       - run: pnpm run test:browser
       # Skips itself outside macOS.
       - run: pnpm run test:focus
+
+  focus:
+    name: headed launch keeps focus (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check for Chrome
+        id: chrome
+        run: |
+          if [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Chrome
+        if: steps.chrome.outputs.present == 'false'
+        run: brew install --cask google-chrome
+      - name: Focus check
+        run: pnpm run test:focus
