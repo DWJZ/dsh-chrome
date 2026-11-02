@@ -5,16 +5,12 @@
  * @module dsh-chrome
  */
 
-import { join } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
-import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
-import { Config } from './config.ts'
-import type { ResolvedConfig } from './config.ts'
+import { resolveConfig, dshHome } from './config.ts'
+import type { Config } from './config.ts'
 import { ChromeManager } from './manager.ts'
 import { locateChrome } from './chrome/locate.ts'
 import { registerTools } from './tools/index.ts'
-import type {} from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-tools'
+import type { ToolDefinition } from './tool-contract.ts'
 
 /** Cordis plugin identity. */
 export const name = 'dsh-chrome'
@@ -22,24 +18,45 @@ export const name = 'dsh-chrome'
 /** Services required before tools can be registered. */
 export const inject = ['tools']
 
-export { Config }
+/** Diagnostics sink the host provides. */
+interface PluginLogger {
+  info(message: string): void
+  warn(message: string): void
+}
+
+/** Payload of the agent lifecycle events this plugin consumes. */
+interface AgentLifecyclePayload {
+  agent: { id: string }
+}
+
+/** Agent registry lookup used for lease liveness. */
+interface AgentRegistryLike {
+  get(id: string): unknown
+}
+
+/** The host facilities this plugin uses, declared locally so the package installs without the harness. */
+export interface PluginContext {
+  logger: PluginLogger
+  tools: { register(definition: ToolDefinition): () => void }
+  effect(body: () => () => Promise<void>, label?: string): unknown
+  on(event: string, listener: (payload: AgentLifecyclePayload) => void): unknown
+  get(service: 'agents'): AgentRegistryLike | undefined
+}
 
 /**
  * Mount the plugin: create the instance manager, register the browser tools,
  * and wire the agent lifecycle hooks that release leases and close on-demand
  * browsers.
  * @param ctx - plugin context.
- * @param config - resolved plugin configuration.
+ * @param config - plugin configuration as written in the profile patch.
  */
-export function apply(ctx: Context, config: ResolvedConfig): void {
-  const profileRoot = config.profileRoot.trim() === '' ? dshHomePath('chrome') : config.profileRoot
-  const screenshotDir = config.screenshotDir.trim() === ''
-    ? join(profileRoot, 'screenshots')
-    : config.screenshotDir
+export function apply(ctx: PluginContext, config: Config = {}): void {
+  const resolved = resolveConfig(config, dshHome())
+  const { profileRoot, screenshotDir } = resolved
 
   let executable: string | undefined
   const resolveExecutable = (): string => {
-    executable ??= locateChrome(config.executablePath)
+    executable ??= locateChrome(resolved.executablePath)
     return executable
   }
 
@@ -47,16 +64,13 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
     profileRoot,
     screenshotDir,
     resolveExecutable,
-    chromeArgs: config.chromeArgs,
-    toolCallTimeoutMs: config.toolCallTimeoutMs,
-    leaseTtlMs: config.leaseTtlMs,
-    ephemeralCloseOn: config.ephemeralCloseOn,
+    chromeArgs: resolved.chromeArgs,
+    toolCallTimeoutMs: resolved.toolCallTimeoutMs,
+    leaseTtlMs: resolved.leaseTtlMs,
+    ephemeralCloseOn: resolved.ephemeralCloseOn,
     isAgentAlive: (agentId) => {
       const agents = ctx.get('agents')
-      // Agent ids are session ids; the registry never holds one for a disposed session.
-      return agents === undefined
-        ? undefined
-        : agents.get(agentId as Parameters<typeof agents.get>[0]) !== undefined
+      return agents === undefined ? undefined : agents.get(agentId) !== undefined
     },
     logger: ctx.logger,
   })
@@ -86,3 +100,4 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
     })
   })
 }
+

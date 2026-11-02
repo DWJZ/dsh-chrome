@@ -6,8 +6,8 @@
 
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool } from '../tool-contract.ts'
+import type { ToolDefinition } from '../tool-contract.ts'
 import { ChromeError, describeError } from '../errors.ts'
 import { DEFAULT_BROWSER } from '../manager.ts'
 import type { ChromeManager } from '../manager.ts'
@@ -77,7 +77,7 @@ function renderJson(value: unknown): { type: 'text'; text: string }[] {
 }
 
 const JSON_OUTPUT = {
-  schema: { type: 'json' as const },
+  schema: {},
   render: (_args: unknown, value: unknown) => renderJson(value),
 }
 
@@ -86,7 +86,7 @@ const JSON_OUTPUT = {
  * @param ctx - plugin context providing the tool registry.
  * @param deps - instance manager and screenshot location.
  */
-export function registerTools(ctx: Context, deps: ToolDeps): void {
+export function registerTools(ctx: { tools: { register(definition: ToolDefinition): () => void } }, deps: ToolDeps): void {
   const { manager, screenshotDir } = deps
 
   ctx.tools.register(defineTool({

@@ -4,7 +4,8 @@
  * @module dsh-chrome/config
  */
 
-import Schema from '@deepseek-ai/schemastery'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 /** When an on-demand instance releases its Chrome process. */
 export type CloseOn = 'turn' | 'session' | 'manual'
@@ -28,18 +29,75 @@ export interface Config {
 }
 
 /** Configuration after defaults are applied. */
-export type ResolvedConfig = Required<Omit<Config, 'chromeArgs' | 'screenshotDir'>> & {
+export interface ResolvedConfig {
+  profileRoot: string
+  executablePath: string
+  toolCallTimeoutMs: number
+  leaseTtlMs: number
+  ephemeralCloseOn: CloseOn
   chromeArgs: string[]
   screenshotDir: string
 }
 
-/** Loader-facing schema; defaults are the documented behavior for omitted fields. */
-export const Config: Schema<Config, ResolvedConfig> = Schema.object({
-  profileRoot: Schema.string().default(''),
-  executablePath: Schema.string().default('auto'),
-  toolCallTimeoutMs: Schema.number().min(1).default(120000),
-  leaseTtlMs: Schema.number().min(1).default(1800000),
-  ephemeralCloseOn: Schema.union(['turn', 'session', 'manual']).default('turn'),
-  chromeArgs: Schema.array(Schema.string()).default([]),
-  screenshotDir: Schema.string().default(''),
-})
+const CLOSE_POLICIES: readonly CloseOn[] = ['turn', 'session', 'manual']
+
+/**
+ * Resolve the harness home: `DSH_HOME` when set, otherwise `~/.dsh`.
+ * @param env - environment to read.
+ * @returns absolute home directory.
+ */
+export function dshHome(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.DSH_HOME?.trim()
+  if (configured !== undefined && configured !== '') return expandHome(configured)
+  return join(homedir(), '.dsh')
+}
+
+/**
+ * Expand a leading `~` to the current user's home directory.
+ * @param path - configured path, possibly starting with `~`.
+ * @returns the absolute path.
+ */
+export function expandHome(path: string): string {
+  if (path === '~') return homedir()
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2))
+  return path
+}
+
+function positive(value: unknown, fallback: number, field: string): number {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`dsh-chrome: ${field} must be a positive number`)
+  }
+  return value
+}
+
+/**
+ * Apply defaults and validate the operator's configuration.
+ * @param raw - configuration as written in the profile patch.
+ * @param home - harness home directory, used for the default profile root.
+ * @returns the resolved configuration.
+ * @throws when a field has the wrong type or an unsupported value.
+ */
+export function resolveConfig(raw: Config = {}, home: string = dshHome()): ResolvedConfig {
+  const profileRoot = raw.profileRoot?.trim()
+  const screenshotDir = raw.screenshotDir?.trim()
+  const executablePath = raw.executablePath?.trim()
+  const closeOn = raw.ephemeralCloseOn ?? 'turn'
+  if (!CLOSE_POLICIES.includes(closeOn)) {
+    throw new Error(`dsh-chrome: ephemeralCloseOn must be one of ${CLOSE_POLICIES.join(', ')}`)
+  }
+  const chromeArgs = raw.chromeArgs ?? []
+  if (!Array.isArray(chromeArgs) || chromeArgs.some((arg) => typeof arg !== 'string')) {
+    throw new Error('dsh-chrome: chromeArgs must be an array of strings')
+  }
+  const root = profileRoot === undefined || profileRoot === '' ? join(home, 'chrome') : expandHome(profileRoot)
+  return {
+    profileRoot: root,
+    executablePath: executablePath === undefined || executablePath === '' ? 'auto' : executablePath,
+    toolCallTimeoutMs: positive(raw.toolCallTimeoutMs, 120_000, 'toolCallTimeoutMs'),
+    leaseTtlMs: positive(raw.leaseTtlMs, 1_800_000, 'leaseTtlMs'),
+    ephemeralCloseOn: closeOn,
+    chromeArgs,
+    screenshotDir: screenshotDir === undefined || screenshotDir === '' ? join(root, 'screenshots') : expandHome(screenshotDir),
+  }
+}
