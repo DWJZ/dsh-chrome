@@ -5,6 +5,7 @@
  */
 
 import { rm } from 'node:fs/promises'
+import { probeDevTools } from './chrome/cdp.ts'
 import { ensureChrome } from './chrome/process.ts'
 import type { LaunchLogger, RunningChrome } from './chrome/process.ts'
 import { ChromeError } from './errors.ts'
@@ -20,8 +21,10 @@ export interface InstanceOptions {
   readonly name: string
   /** Start the browser without a window. */
   readonly headless: boolean
-  /** Profile directory holding cookies and logins. */
+  /** Directory holding cookies and logins. */
   readonly profileDir: string
+  /** Shared profile name, or null for a throwaway one. */
+  readonly profile: string | null
   /** When this instance releases its Chrome process. */
   readonly closeOn: CloseOn
   /** Agent that created an on-demand instance, when any. */
@@ -76,6 +79,26 @@ export class BrowserInstance {
   /** Close policy recorded when the instance was created. */
   get closeOn(): CloseOn {
     return this.options.closeOn
+  }
+
+  /** Profile this instance runs on, or null when it is throwaway. */
+  get profile(): string | null {
+    return this.options.profile
+  }
+
+  /** Directory this instance's browser uses. */
+  get profileDir(): string {
+    return this.options.profileDir
+  }
+
+  /**
+   * Whether the browser process still answers on its DevTools port.
+   * @returns true when the endpoint responds.
+   */
+  async isAlive(): Promise<boolean> {
+    const port = this.chrome?.endpoint.port
+    if (port === undefined) return false
+    return (await probeDevTools(port)) !== undefined
   }
 
   /** Start Chrome and the MCP engine when they are not running yet. */
@@ -185,7 +208,7 @@ export class BrowserInstance {
     this.chrome = undefined
     if (engine !== undefined) await engine.close()
     if (chrome !== undefined) await chrome.close()
-    if (this.options.headless) {
+    if (this.options.profile === null) {
       try {
         // Chrome helpers can still be flushing files right after the main
         // process exits, so a single removal races with them.

@@ -1,6 +1,7 @@
 /**
- * Live integration test over the plugin's own classes: multi-instance naming,
- * tab leases across agents, the page tools, headless cleanup, and orphan reaping.
+ * Live integration test over the plugin's own classes: shared and throwaway
+ * profiles, name and profile conflicts, a dead instance replaced on reopen,
+ * tab leases across agents, the page tools, and orphan reaping.
  * Run with `node --import tsx/esm test/integration.mjs`.
  */
 
@@ -14,10 +15,12 @@ import { ChromeManager } from '../src/manager.ts'
 
 const logger = { info: () => {}, warn: (message) => console.warn(`[warn] ${message}`) }
 const root = mkdtempSync(join(tmpdir(), 'dsh-chrome-it-'))
+const sharedDir = join(root, 'profiles', 'default')
 
 function makeManager(isAlive = () => true) {
   return new ChromeManager({
-    profileRoot: join(root, 'profiles'),
+    profileRoot: root,
+    defaultProfile: 'default',
     screenshotDir: join(root, 'shots'),
     resolveExecutable: () => locateChrome('auto'),
     chromeArgs: [],
@@ -38,13 +41,22 @@ function isAlive(pid) {
   }
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 const html = 'data:text/html,<html><body><input id=i><button id=b onclick="document.title=\'clicked\'">Press</button></body></html>'
 const manager = makeManager()
 try {
-  // --- two instances, names are unique -------------------------------------
-  const one = await manager.open('one', true, 'agent-a')
-  const two = await manager.open('two', true, 'agent-b')
-  await assert.rejects(manager.open('one', true, 'agent-c'), (error) => error.code === 'instance_exists')
+  // --- instances share one profile by default ------------------------------
+  const one = await manager.open('one', { headless: true, ownerAgentId: 'agent-a' })
+  assert.equal(one.profile, 'default')
+  assert.equal(one.profileDir, sharedDir)
+  const two = await manager.open('two', { headless: true, ephemeral: true, ownerAgentId: 'agent-b' })
+  assert.equal(two.profile, null)
+  assert.equal(two.profileDir, join(root, 'ephemeral', 'two'))
+
+  await assert.rejects(manager.open('one', { headless: true }), (error) => error.code === 'instance_exists')
+  // Chrome allows one process per profile directory.
+  await assert.rejects(manager.open('three', { headless: true }), (error) => error.code === 'profile_busy')
   assert.equal((await manager.list()).length, 2)
 
   // --- leases: one owner per tab -------------------------------------------
@@ -79,32 +91,49 @@ try {
   const afterNav = await one.call('evaluate_script', { pageId: tab.pageId, function: '() => document.title' })
   assert.match(afterNav.text, /nav/, 'navigate changed the document')
 
-  // --- headless instances close with their owner and drop the profile ------
-  const twoDir = join(root, 'profiles', 'two')
-  assert.ok(existsSync(twoDir), 'headless profile exists while open')
+  // --- a throwaway profile dies with its instance, a shared one stays ------
+  const twoDir = join(root, 'ephemeral', 'two')
+  assert.ok(existsSync(twoDir), 'throwaway profile exists while open')
   const closed = await manager.closeOwnedBy('agent-b', ['turn'])
   assert.deepEqual(closed, ['two'])
-  assert.ok(!existsSync(twoDir), 'headless profile removed on close')
+  assert.ok(!existsSync(twoDir), 'throwaway profile removed on close')
 
   assert.equal(await manager.close('one'), true)
-  assert.ok(!existsSync(join(root, 'profiles', 'one')), 'explicit close removes the headless profile')
+  assert.ok(existsSync(sharedDir), 'shared profile survives the instance')
   assert.equal((await manager.list()).length, 0)
 
-  // --- orphan reaping: a new manager cleans a leftover headless browser ----
-  const orphan = await manager.open('ghost', true, 'agent-x')
+  // --- another instance finds the same profile and its logins --------------
+  const three = await manager.open('three', { headless: true })
+  assert.equal(three.profileDir, sharedDir)
+  assert.equal((await three.pages()).length >= 1, true)
+
+  // --- a browser that died is replaced when its name is reused -------------
+  const state = await readInstanceState(sharedDir)
+  assert.ok(state !== undefined, 'running browser left a state file')
+  process.kill(state.pid, 'SIGKILL')
+  for (let attempt = 0; attempt < 50 && isAlive(state.pid); attempt += 1) await sleep(100)
+  assert.equal(manager.require('three').name, 'three')
+  const revived = await manager.open('three', { headless: true })
+  assert.equal(revived.profileDir, sharedDir, 'the recovered instance keeps the profile')
+  assert.ok((await revived.pages()).length >= 1, 'the recovered instance has a page')
+  await manager.close('three')
+
+  // --- orphan reaping: a new manager cleans leftover throwaway browsers ----
+  const orphan = await manager.open('ghost', { headless: true, ephemeral: true })
   await orphan.pages()
-  const ghostDir = join(root, 'profiles', 'ghost')
-  const state = await readInstanceState(ghostDir)
-  assert.ok(state !== undefined, 'orphan wrote its state file')
-  assert.ok(isAlive(state.pid), 'orphan browser is running')
+  const ghostDir = join(root, 'ephemeral', 'ghost')
+  const ghostState = await readInstanceState(ghostDir)
+  assert.ok(ghostState !== undefined, 'orphan wrote its state file')
+  assert.ok(isAlive(ghostState.pid), 'orphan browser is running')
 
   const nextHost = makeManager()
   const reaped = await nextHost.reapOrphans()
   assert.deepEqual(reaped, ['ghost'])
-  assert.ok(!isAlive(state.pid), 'orphan browser stopped')
+  assert.ok(!isAlive(ghostState.pid), 'orphan browser stopped')
   assert.ok(!existsSync(ghostDir), 'orphan profile removed')
+
   // A profile left behind without its state file is still recognised by its marker.
-  const markerOnly = join(root, 'profiles', 'marker-only')
+  const markerOnly = join(root, 'ephemeral', 'marker-only')
   mkdirSync(markerOnly, { recursive: true })
   writeFileSync(join(markerOnly, '.dsh-chrome-profile.json'), JSON.stringify({ headless: true }))
   const reapedAgain = await nextHost.reapOrphans()

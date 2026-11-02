@@ -16,7 +16,8 @@ import { ChromeManager } from '../src/manager.ts'
 const logger = { info: () => {}, warn: (message) => console.warn(`[warn] ${message}`) }
 const root = mkdtempSync(join(tmpdir(), 'dsh-chrome-recovery-'))
 const manager = new ChromeManager({
-  profileRoot: join(root, 'profiles'),
+  profileRoot: root,
+  defaultProfile: 'default',
   screenshotDir: join(root, 'shots'),
   resolveExecutable: () => locateChrome('auto'),
   chromeArgs: [],
@@ -28,7 +29,7 @@ const manager = new ChromeManager({
 })
 
 try {
-  const instance = await manager.open('recover', true, 'agent-r')
+  const instance = await manager.open('recover', { headless: true, ephemeral: true, ownerAgentId: 'agent-r' })
   assert.ok((await instance.pages()).length >= 1, 'browser starts with a page')
   const port = instance.port
   assert.ok(port !== undefined)

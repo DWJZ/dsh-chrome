@@ -11,7 +11,7 @@ kind: "plugin-reference"
 
 `dsh-chrome` 给 Harness agent 一批它能真正操控的浏览器。每个实例都是本插件自己起的 Chrome 进程，用独立的 profile 目录，所以不会碰你日常用的那个浏览器。工具经 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) 提供，一个实例一个 server。
 
-实例名由 agent 自己起。`chrome_browser_open` 默认开带界面的浏览器（方便人登录），profile 跨重启保留；传 `headless: true` 则开无窗口的。重名会被拒绝，让调用方换一个。
+实例名由 agent 自己起，默认开带界面的那种（方便人登录），并且共享同一个 profile：除非用 `profile` 指定另一个、或用 `ephemeral: true` 表示不用 profile，否则都落在默认 profile 上。Chrome 一个 profile 目录同时只能有一个进程，所以一个 profile 在同一时刻只支撑一个运行中的实例；登录态在前后两次开的实例之间是通的。重名、或者要用的 profile 正被别的实例占着，都会被拒绝，并告诉你是谁占的。
 
 tab 按 agent 租借。多个会话可以同时操作同一个浏览器，但一个 tab 在同一时刻只归一个会话，直到它释放、关闭该 tab，或者会话结束。工具调用超时只让那一次调用失败，不会把 tab 收走。
 
@@ -46,7 +46,7 @@ pnpm dsh plugin --profile web add link:/path/to/dsh-chrome
 | 工具 | 用途 |
 |---|---|
 | `chrome_browser_list` | 列出实例、端口、tab 数与租约归属 |
-| `chrome_browser_open` | 起实例；`name` 由 agent 起，重名直接失败 |
+| `chrome_browser_open` | 起实例；`name` 由 agent 起，`profile` 指定共享 profile，`ephemeral` 用一次性 profile |
 | `chrome_browser_close` | 关实例并释放它的租约 |
 | `chrome_list_tabs` | 列出 tab 的 id、标题、URL 与占用者 |
 | `chrome_search_tabs` | 按标题、URL 或两者过滤 tab |
@@ -64,7 +64,7 @@ pnpm dsh plugin --profile web add link:/path/to/dsh-chrome
 
 - 启动用 `--no-startup-window`，第一个页面经 CDP 以 `background: true` 创建，所以浏览器不会抢焦点。
 - 启动参数带 `--disable-blink-features=AutomationControlled`：否则开着 DevTools 端口会让页面报告 `navigator.webdriver`，登录服务会因此拒绝这个浏览器。
-- 无头实例默认在本轮结束时关闭，profile 目录一并删除。
+- 无头实例默认在本轮结束时关闭；一次性 profile 随实例一起删除。
 - 插件加载时会清掉上个宿主留下的无头 profile；带界面的 profile 原样保留，因为登录态在里面。
 - MCP 服务挂掉后，下一次调用会报 `browser_down`（page id 变了），之后的调用会重连。
 - 每个实例跑一个 `chrome-devtools-mcp` 进程，挂载参数是 `--experimentalStructuredContent` 与 `--workspace=<screenshotDir>`。
@@ -75,6 +75,7 @@ pnpm dsh plugin --profile web add link:/path/to/dsh-chrome
 - 两个 Harness 宿主共用同一个 profile 目录时，租约不共享。
 - 浏览器经 MCP 驱动，没有被这里包一层的能力（上游工具）用不了。
 - 带界面的实例会一直跑，直到 `chrome_browser_close`——登录态正是它存在的理由。
+- 共享 profile 归一个运行中的实例所有；第二个调用方会收到提示，说明被谁占着。
 
 ## 开发
 

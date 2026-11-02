@@ -62,6 +62,7 @@ export function apply(ctx: PluginContext, config: Config = {}): void {
 
   const manager = new ChromeManager({
     profileRoot,
+    defaultProfile: resolved.defaultProfile,
     screenshotDir,
     resolveExecutable,
     chromeArgs: resolved.chromeArgs,

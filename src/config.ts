@@ -24,6 +24,8 @@ export interface Config {
   ephemeralCloseOn?: CloseOn
   /** Extra Chrome command-line arguments appended after the plugin's own. */
   chromeArgs?: string[]
+  /** Profile every instance shares unless it asks for another or none. */
+  defaultProfile?: string
   /** Screenshot directory; defaults to `<profileRoot>/screenshots`. */
   screenshotDir?: string
 }
@@ -36,6 +38,7 @@ export interface ResolvedConfig {
   leaseTtlMs: number
   ephemeralCloseOn: CloseOn
   chromeArgs: string[]
+  defaultProfile: string
   screenshotDir: string
 }
 
@@ -83,6 +86,7 @@ export function resolveConfig(raw: Config = {}, home: string = dshHome()): Resol
   const screenshotDir = raw.screenshotDir?.trim()
   const executablePath = raw.executablePath?.trim()
   const closeOn = raw.ephemeralCloseOn ?? 'turn'
+  const defaultProfile = raw.defaultProfile?.trim() ?? ''
   if (!CLOSE_POLICIES.includes(closeOn)) {
     throw new Error(`dsh-chrome: ephemeralCloseOn must be one of ${CLOSE_POLICIES.join(', ')}`)
   }
@@ -98,6 +102,7 @@ export function resolveConfig(raw: Config = {}, home: string = dshHome()): Resol
     leaseTtlMs: positive(raw.leaseTtlMs, 1_800_000, 'leaseTtlMs'),
     ephemeralCloseOn: closeOn,
     chromeArgs,
+    defaultProfile: defaultProfile === '' ? 'default' : defaultProfile,
     screenshotDir: screenshotDir === undefined || screenshotDir === '' ? join(root, 'screenshots') : expandHome(screenshotDir),
   }
 }

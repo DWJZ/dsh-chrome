@@ -11,7 +11,7 @@ English | [中文](README.zh.md)
 
 `dsh-chrome` gives a Harness agent real browsers it can drive. Every instance is a Chrome process this plugin starts itself with its own profile directory, so nothing touches the browser you use day to day. Tools are served through [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp), one server per instance.
 
-Instances are named by the agent. `chrome_browser_open` starts a headed browser by default so a person can sign in, and its profile survives restarts; `headless: true` starts a windowless one instead. A duplicate name is refused so the caller picks another.
+Instances are named by the agent, start headed by default so a person can sign in, and share one profile: every instance uses the default profile unless it asks for another with `profile` or for none with `ephemeral: true`. Chrome allows one process per profile directory, so a profile backs one running browser at a time, and logins carry across instances opened one after another. A duplicate name, or a profile another instance holds, is refused with the name of the holder.
 
 Tabs are leased per agent. Several sessions may drive the same browser at once, but one tab belongs to one session until it releases it, closes it, or its session ends. A tool call that times out fails that call only; it never takes the tab away.
 
@@ -46,7 +46,7 @@ Then add the row to the profile's `cordis.patch.yml`:
 | Tool | Purpose |
 |---|---|
 | `chrome_browser_list` | Instances, ports, tab counts, and lease owners |
-| `chrome_browser_open` | Start an instance; `name` is agent-chosen, duplicates fail |
+| `chrome_browser_open` | Start an instance; `name` is agent-chosen, `profile` picks a shared profile, `ephemeral` uses a throwaway one |
 | `chrome_browser_close` | Stop an instance and release its leases |
 | `chrome_list_tabs` | Tabs with ids, titles, URLs, and owners |
 | `chrome_search_tabs` | Filter tabs by title, URL, or both |
@@ -64,7 +64,7 @@ Then add the row to the profile's `cordis.patch.yml`:
 
 - Launch uses `--no-startup-window` and creates the first page through CDP with `background: true`, so the browser never takes focus.
 - Chrome starts with `--disable-blink-features=AutomationControlled`: an open DevTools port otherwise makes pages report `navigator.webdriver`, and sign-in providers reject such a browser.
-- Headless instances close when their turn ends by default, and their profile directory is deleted with them.
+- Headless instances close when their turn ends by default; a throwaway profile is deleted with them.
 - Plugin load reaps headless profiles a previous host left behind; headed profiles are kept for their logins.
 - If the MCP server dies, the next call reports `browser_down` because page ids changed, and later calls reconnect.
 - Each instance runs one `chrome-devtools-mcp` process, mounted with `--experimentalStructuredContent` and `--workspace=<screenshotDir>`.
@@ -75,6 +75,7 @@ Then add the row to the profile's `cordis.patch.yml`:
 - Two Harness hosts sharing one profile directory do not share leases.
 - The browser is driven through MCP, so upstream tools not wrapped here stay unavailable.
 - A headed instance keeps running until `chrome_browser_close`, because its logins are the point.
+- A shared profile belongs to one running instance; the second caller is told which instance holds it.
 
 ## Development
 

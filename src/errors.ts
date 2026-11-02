@@ -9,6 +9,7 @@ export type ChromeErrorCode =
   | 'browser_down'
   | 'instance_gone'
   | 'instance_exists'
+  | 'profile_busy'
   | 'tab_busy'
   | 'tab_gone'
   | 'timeout'

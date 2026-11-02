@@ -101,18 +101,25 @@ export function registerTools(ctx: { tools: { register(definition: ToolDefinitio
 
   ctx.tools.register(defineTool({
     name: 'chrome_browser_open',
-    description: 'Open a dedicated Chrome instance. Headed by default so a person can sign in; the profile persists across restarts. Names are agent-chosen and must be unique.',
+    description: 'Open a dedicated Chrome instance. Headed by default. Instances share one profile by default, so logins carry across instances opened one after another; a profile can only back one running browser, because Chrome allows one process per profile directory.',
     parameters: {
       name: { type: 'string', description: `Instance name (letters, digits, - and _). Defaults to an unused name; "${DEFAULT_BROWSER}" is what tools use when no browser is given.` },
       headless: { type: 'boolean', description: 'Start without a window. Defaults to false (headed).' },
+      profile: { type: 'string', description: 'Shared profile name (letters, digits, - and _). Defaults to the profile configured for this plugin.' },
+      ephemeral: { type: 'boolean', description: 'Use a throwaway profile deleted with the instance instead of any shared one.' },
     },
     output: JSON_OUTPUT,
     async execute(args, exec) {
       const headless = args.headless ?? false
       let name = args.name?.trim()
       if (name === undefined || name === '') name = await freeName(manager)
-      const instance = await manager.open(name, headless, ownerOf(exec))
-      return { name: instance.name, headless: instance.headless, port: instance.port ?? null }
+      const instance = await manager.open(name, {
+        headless,
+        ...(args.profile === undefined ? {} : { profile: args.profile }),
+        ...(args.ephemeral === undefined ? {} : { ephemeral: args.ephemeral }),
+        ...(exec.agent === undefined ? {} : { ownerAgentId: exec.agent.id }),
+      })
+      return { name: instance.name, headless: instance.headless, profile: instance.profile, port: instance.port ?? null }
     },
   }))
 

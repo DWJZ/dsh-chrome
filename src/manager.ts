@@ -1,6 +1,10 @@
 /**
  * Instance registry: starts, reuses, and stops dedicated browsers, and applies
  * the close policy each instance was created with.
+ *
+ * Chrome permits one process per profile directory, so instances that share a
+ * profile run one after another: an open instance owns its profile until it
+ * closes, and a second instance asking for the same profile is refused.
  * @module dsh-chrome/manager
  */
 
@@ -17,10 +21,19 @@ import type { AgentLiveness } from './leases.ts'
 /** Name every browser-scoped tool uses when the caller names none. */
 export const DEFAULT_BROWSER = 'default'
 
+/** Which profile directory a new instance runs on. */
+export type ProfileChoice =
+  /** A named profile shared by every instance that asks for it. */
+  | { kind: 'profile'; name: string }
+  /** A throwaway profile deleted with the instance. */
+  | { kind: 'ephemeral' }
+
 /** Construction parameters shared by every instance this manager creates. */
 export interface ManagerOptions {
-  /** Root holding one directory per instance. */
+  /** Root holding the profile and ephemeral directories. */
   readonly profileRoot: string
+  /** Profile every instance uses unless it asks for another or none. */
+  readonly defaultProfile: string
   /** Directory receiving screenshots. */
   readonly screenshotDir: string
   /** Resolve the Chrome executable on first use, so a missing browser fails a tool instead of the profile. */
@@ -43,8 +56,10 @@ export interface ManagerOptions {
 export type InstanceSummary = {
   name: string
   headless: boolean
+  profile: string | null
   running: boolean
   open: boolean
+  status: 'up' | 'down'
   port: number | null
   closeOn: CloseOn
   owner: string | null
@@ -52,11 +67,25 @@ export type InstanceSummary = {
   error: string | null
 }
 
+/** What opening one instance needs beyond its name. */
+export interface OpenOptions {
+  /** Start without a window. */
+  headless: boolean
+  /** Shared profile to use; omitted means {@link ManagerOptions.defaultProfile}. */
+  profile?: string
+  /** Use a throwaway profile instead of any shared one. */
+  ephemeral?: boolean
+  /** Agent creating the instance, for its close policy. */
+  ownerAgentId?: string
+}
+
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/
 
 /** Owns every browser instance of this plugin. */
 export class ChromeManager {
   private readonly instances = new Map<string, BrowserInstance>()
+  /** Profile directory currently owned by an open instance. */
+  private readonly profileOwners = new Map<string, string>()
 
   /** @param options - filesystem roots and call bounds shared by instances. */
   constructor(private readonly options: ManagerOptions) {}
@@ -64,29 +93,36 @@ export class ChromeManager {
   /**
    * Open a browser, or fail when the name is taken.
    * @param name - agent-chosen instance name.
-   * @param headless - start without a window.
-   * @param ownerAgentId - agent creating the instance, for its close policy.
+   * @param options - headless choice, profile choice, and owning agent.
    * @returns the started instance.
-   * @throws {ChromeError} `instance_exists` on a duplicate name, otherwise startup failures.
+   * @throws {ChromeError} `instance_exists` for a live duplicate name, `profile_busy` when another
+   *   instance holds the profile, otherwise startup failures.
    */
-  async open(name: string, headless: boolean, ownerAgentId: string | undefined): Promise<BrowserInstance> {
+  async open(name: string, options: OpenOptions): Promise<BrowserInstance> {
     if (!NAME_PATTERN.test(name)) {
       throw new ChromeError('instance_exists', `invalid instance name "${name}"; use letters, digits, - and _ (max 32)`)
     }
-    const existing = this.instances.get(name)
-    if (existing !== undefined) {
+    await this.releaseDead(name)
+
+    const choice = this.profileChoice(options)
+    const profileDir = this.profileDir(name, choice)
+    const holder = this.profileOwners.get(profileDir)
+    if (holder !== undefined && holder !== name) {
       throw new ChromeError(
-        'instance_exists',
-        `browser "${name}" already exists; pick another name or reuse it with browser="${name}"`,
+        'profile_busy',
+        `profile "${choice.kind === 'profile' ? choice.name : 'ephemeral'}" is in use by browser "${holder}"; `
+        + `use that browser, close it, or open with ephemeral: true`,
       )
     }
+
     const executablePath = this.options.resolveExecutable()
     const instance = new BrowserInstance({
       name,
-      headless,
-      profileDir: join(this.options.profileRoot, name),
-      closeOn: headless ? this.options.ephemeralCloseOn : 'manual',
-      ...(ownerAgentId === undefined ? {} : { ownerAgentId }),
+      headless: options.headless,
+      profile: choice.kind === 'profile' ? choice.name : null,
+      profileDir,
+      closeOn: options.headless ? this.options.ephemeralCloseOn : 'manual',
+      ...(options.ownerAgentId === undefined ? {} : { ownerAgentId: options.ownerAgentId }),
       executablePath,
       workspaceDirs: [this.options.screenshotDir],
       chromeArgs: this.options.chromeArgs,
@@ -96,10 +132,12 @@ export class ChromeManager {
       logger: this.options.logger,
     })
     this.instances.set(name, instance)
+    this.profileOwners.set(profileDir, name)
     try {
       await instance.start()
     } catch (error) {
       this.instances.delete(name)
+      this.profileOwners.delete(profileDir)
       throw error
     }
     return instance
@@ -134,7 +172,7 @@ export class ChromeManager {
   async close(name: string): Promise<boolean> {
     const instance = this.instances.get(name)
     if (instance === undefined) return false
-    this.instances.delete(name)
+    this.forget(instance)
     await instance.stop()
     return true
   }
@@ -150,7 +188,7 @@ export class ChromeManager {
     for (const [name, instance] of [...this.instances]) {
       if (instance.ownerAgentId !== agentId) continue
       if (!policies.includes(instance.closeOn)) continue
-      this.instances.delete(name)
+      this.forget(instance)
       await instance.stop()
       closed.push(name)
     }
@@ -166,34 +204,17 @@ export class ChromeManager {
   }
 
   /**
-   * Stop headless browsers left behind by a previous host process.
+   * Remove persistent profiles and throwaway browsers a previous host left behind.
    *
-   * A headless profile is on demand by definition, so at plugin load no live
-   * agent can own one.
-   * @returns names of the profiles that were cleaned up.
+   * Shared profiles are never touched: their logins are the point. Ephemeral
+   * directories, and legacy per-instance directories, are removed.
+   * @returns directory names that were cleaned up.
    */
   async reapOrphans(): Promise<string[]> {
     const reaped: string[] = []
-    let entries: Dirent[]
-    try {
-      entries = await readdir(this.options.profileRoot, { withFileTypes: true })
-    } catch {
-      return reaped
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory() || this.instances.has(entry.name)) continue
-      const dir = join(this.options.profileRoot, entry.name)
-      const headless = (await readProfileMarker(dir)) ?? (await readInstanceState(dir))?.headless
-      if (headless !== true) continue
-      const state = await readInstanceState(dir)
-      if (state !== undefined) await terminateProcess(state.pid)
-      try {
-        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
-      } catch (error) {
-        this.options.logger.warn(`dsh-chrome: could not remove leftover profile ${dir}: ${String(error)}`)
-        continue
-      }
-      reaped.push(entry.name)
+    const ephemeralRoot = join(this.options.profileRoot, 'ephemeral')
+    for (const [dir, label] of [...(await this.candidateOrphans()), ...(await this.listDir(ephemeralRoot))]) {
+      if (await this.reapOne(dir, label)) reaped.push(label)
     }
     return reaped
   }
@@ -207,16 +228,20 @@ export class ChromeManager {
     for (const instance of this.instances.values()) {
       let tabs: number | null = null
       let error: string | null = null
+      let status: 'up' | 'down' = 'up'
       try {
         tabs = (await instance.pages()).length
       } catch (failure) {
+        status = 'down'
         error = failure instanceof Error ? failure.message : String(failure)
       }
       summaries.push({
         name: instance.name,
         headless: instance.headless,
-        running: instance.running,
+        profile: instance.profile,
+        running: instance.running && status === 'up',
         open: true,
+        status,
         port: instance.port ?? null,
         closeOn: instance.closeOn,
         owner: instance.ownerAgentId ?? null,
@@ -231,6 +256,86 @@ export class ChromeManager {
   async dispose(): Promise<void> {
     const instances = [...this.instances.values()]
     this.instances.clear()
+    this.profileOwners.clear()
     await Promise.allSettled(instances.map(async (instance) => instance.stop()))
+  }
+
+  /** Drop an instance from both maps. */
+  private forget(instance: BrowserInstance): void {
+    this.instances.delete(instance.name)
+    this.profileOwners.delete(instance.profileDir)
+  }
+
+  /**
+   * Drop a same-named instance whose browser is gone, so the name can be reused.
+   * @param name - instance name the caller wants.
+   */
+  private async releaseDead(name: string): Promise<void> {
+    const existing = this.instances.get(name)
+    if (existing === undefined) return
+    if (await existing.isAlive()) {
+      throw new ChromeError('instance_exists', `browser "${name}" already exists; pick another name or reuse it with browser="${name}"`)
+    }
+    this.options.logger.info(`dsh-chrome: replacing browser "${name}", its process is gone`)
+    this.forget(existing)
+    await existing.stop().catch(() => {})
+  }
+
+  /** Resolve the requested profile choice. */
+  private profileChoice(options: OpenOptions): ProfileChoice {
+    if (options.ephemeral === true) return { kind: 'ephemeral' }
+    const requested = options.profile?.trim()
+    const name = requested === undefined || requested === '' ? this.options.defaultProfile : requested
+    if (!NAME_PATTERN.test(name)) {
+      throw new ChromeError('instance_exists', `invalid profile name "${name}"; use letters, digits, - and _ (max 32)`)
+    }
+    return { kind: 'profile', name }
+  }
+
+  /** Directory holding one instance's Chrome data. */
+  private profileDir(instanceName: string, choice: ProfileChoice): string {
+    return choice.kind === 'profile'
+      ? join(this.options.profileRoot, 'profiles', choice.name)
+      : join(this.options.profileRoot, 'ephemeral', instanceName)
+  }
+
+  /** Directories left behind by older layouts, still reaped when they were headless. */
+  private async candidateOrphans(): Promise<[string, string][]> {
+    const legacy: [string, string][] = []
+    for (const entry of await this.listDir(this.options.profileRoot)) {
+      const [dir] = entry
+      const name = dir.slice(dir.lastIndexOf('/') + 1)
+      if (name === 'profiles' || name === 'ephemeral' || name === 'screenshots') continue
+      legacy.push(entry)
+    }
+    return legacy
+  }
+
+  /** Read one directory as [path, name] pairs, tolerating a missing root. */
+  private async listDir(root: string): Promise<[string, string][]> {
+    let entries: Dirent[]
+    try {
+      entries = await readdir(root, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    return entries
+      .filter((entry) => entry.isDirectory() && !this.instances.has(entry.name))
+      .map((entry) => [join(root, entry.name), entry.name])
+  }
+
+  /** Stop and remove one leftover directory when it is headless. */
+  private async reapOne(dir: string, label: string): Promise<boolean> {
+    const headless = (await readProfileMarker(dir)) ?? (await readInstanceState(dir))?.headless
+    if (headless !== true) return false
+    const state = await readInstanceState(dir)
+    if (state !== undefined) await terminateProcess(state.pid)
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    } catch (error) {
+      this.options.logger.warn(`dsh-chrome: could not remove leftover profile ${dir}: ${String(error)}`)
+      return false
+    }
+    return true
   }
 }
