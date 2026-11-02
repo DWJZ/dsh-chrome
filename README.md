@@ -9,7 +9,7 @@ DeepSeek Harness 浏览器插件：自己起专用 Chrome 实例，经 [`chrome-
 - **多实例并存**：`chrome_browser_open` 默认开一个带 GUI 的实例（可以登录、登录态留在 profile 目录里），也可以 `headless: true` 开无头实例。
 - **tab 级租约**：租约绑定 `(实例, tab, 会话)`，不是某一次调用。只有显式 `chrome_release_tab`、只读 tab、tab 被关、会话结束才释放；`toolCallTimeoutMs` 超时只让当次调用失败，不会没收 tab。
 - **常驻与按需**：headed 实例只在显式 `chrome_browser_close` 时关闭；headless 实例按 `ephemeralCloseOn` 在轮次结束（默认）或会话结束时关闭，关闭时连同 profile 目录一起删掉。
-- **孤儿清理**：插件加载时扫描 `profileRoot`，把上个宿主留下的 headless 实例停掉并删目录。
+- **孤儿清理**：每个 profile 目录里写一个 `.dsh-chrome-profile.json` 标记；插件加载时扫描 `profileRoot`，按标记把上个宿主留下的 headless 实例停掉并删目录，headed 的目录原样保留（登录态）。
 - **MCP 崩溃恢复**：MCP 子进程断开时自动重启，但当前这次调用会报 `browser_down`（page id 变了），让调用方重新 `chrome_list_tabs`。
 
 ## 安装

@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { ChromeError } from './errors.ts'
 import { BrowserInstance } from './instance.ts'
 import type { CloseOn } from './config.ts'
-import { readInstanceState, terminateProcess } from './chrome/process.ts'
+import { readInstanceState, readProfileMarker, terminateProcess } from './chrome/process.ts'
 import type { LaunchLogger } from './chrome/process.ts'
 import type { AgentLiveness } from './leases.ts'
 
@@ -183,9 +183,10 @@ export class ChromeManager {
     for (const entry of entries) {
       if (!entry.isDirectory() || this.instances.has(entry.name)) continue
       const dir = join(this.options.profileRoot, entry.name)
+      const headless = (await readProfileMarker(dir)) ?? (await readInstanceState(dir))?.headless
+      if (headless !== true) continue
       const state = await readInstanceState(dir)
-      if (state === undefined || !state.headless) continue
-      await terminateProcess(state.pid)
+      if (state !== undefined) await terminateProcess(state.pid)
       await rm(dir, { recursive: true, force: true })
       reaped.push(entry.name)
     }

@@ -56,6 +56,7 @@ export interface InstanceState {
 }
 
 const STATE_FILE = '.dsh-chrome-instance.json'
+const PROFILE_MARKER = '.dsh-chrome-profile.json'
 const STARTUP_TIMEOUT_MS = 30000
 
 function isAlive(pid: number): boolean {
@@ -143,6 +144,7 @@ export async function ensureChrome(spec: ChromeLaunchSpec, logger: LaunchLogger)
   }
   await mkdir(spec.profileDir, { recursive: true })
   await rm(join(spec.profileDir, STATE_FILE), { force: true })
+  await writeFile(join(spec.profileDir, PROFILE_MARKER), JSON.stringify({ headless: spec.headless }), 'utf8')
   await rm(devToolsActivePortFile(spec.profileDir), { force: true })
 
   const args = [
@@ -196,3 +198,21 @@ export async function forgetChrome(profileDir: string): Promise<void> {
 
 /** Child process handle retained for tests. */
 export type { ChildProcess }
+
+/**
+ * Whether a profile directory belongs to a headless instance.
+ *
+ * The marker survives a crashed host process and tells a stale on-demand
+ * profile apart from a headed one whose logins must be preserved.
+ * @param profileDir - instance profile directory.
+ * @returns true for headless profiles, false for headed ones, undefined when unknown.
+ */
+export async function readProfileMarker(profileDir: string): Promise<boolean | undefined> {
+  try {
+    const text = await readFile(join(profileDir, '.dsh-chrome-profile.json'), 'utf8')
+    const parsed = JSON.parse(text) as { headless?: unknown }
+    return parsed.headless === true
+  } catch {
+    return undefined
+  }
+}

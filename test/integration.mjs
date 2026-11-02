@@ -5,7 +5,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { locateChrome } from '../src/chrome/locate.ts'
@@ -98,6 +98,14 @@ try {
   assert.deepEqual(reaped, ['ghost'])
   assert.ok(!isAlive(state.pid), 'orphan browser stopped')
   assert.ok(!existsSync(ghostDir), 'orphan profile removed')
+  // A profile left behind without its state file is still recognised by its marker.
+  const markerOnly = join(root, 'profiles', 'marker-only')
+  mkdirSync(markerOnly, { recursive: true })
+  writeFileSync(join(markerOnly, '.dsh-chrome-profile.json'), JSON.stringify({ headless: true }))
+  const reapedAgain = await nextHost.reapOrphans()
+  assert.deepEqual(reapedAgain, ['marker-only'])
+  assert.ok(!existsSync(markerOnly), 'marker-only profile removed')
+
   await nextHost.dispose()
 
   console.log('INTEGRATION OK')
