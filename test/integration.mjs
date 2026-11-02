@@ -59,6 +59,11 @@ try {
   const snapshot = await one.call('evaluate_script', { pageId: tab.pageId, function: '() => document.body.innerHTML' })
   assert.match(snapshot.text, /Press/, 'html read sees the button')
 
+  // Chrome advertises automation whenever a DevTools port is open unless the
+  // plugin disables it; sign-in providers reject such a browser.
+  const webdriver = await one.call('evaluate_script', { pageId: tab.pageId, function: '() => navigator.webdriver' })
+  assert.match(webdriver.text, /false/, 'pages do not advertise automation')
+
   const buttonUid = /uid=(\S+) button/.exec((await one.call('take_snapshot', { pageId: tab.pageId })).text)
   assert.ok(buttonUid, 'snapshot exposes the button uid')
   await one.call('click', { pageId: tab.pageId, uid: buttonUid[1] })

@@ -153,6 +153,9 @@ export async function ensureChrome(spec: ChromeLaunchSpec, logger: LaunchLogger)
     '--no-first-run',
     '--no-default-browser-check',
     '--no-startup-window',
+    // An open DevTools port makes Chrome advertise automation through
+    // `navigator.webdriver`, and sign-in providers reject such a browser.
+    '--disable-blink-features=AutomationControlled',
     ...(spec.headless ? ['--headless=new'] : []),
     ...spec.extraArgs,
   ]

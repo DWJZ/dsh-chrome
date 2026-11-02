@@ -63,6 +63,7 @@ pnpm dsh plugin --profile web add link:/path/to/dsh-chrome
 ## 行为
 
 - 启动用 `--no-startup-window`，第一个页面经 CDP 以 `background: true` 创建，所以浏览器不会抢焦点。
+- 启动参数带 `--disable-blink-features=AutomationControlled`：否则开着 DevTools 端口会让页面报告 `navigator.webdriver`，登录服务会因此拒绝这个浏览器。
 - 无头实例默认在本轮结束时关闭，profile 目录一并删除。
 - 插件加载时会清掉上个宿主留下的无头 profile；带界面的 profile 原样保留，因为登录态在里面。
 - MCP 服务挂掉后，下一次调用会报 `browser_down`（page id 变了），之后的调用会重连。
