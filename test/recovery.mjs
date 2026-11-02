@@ -29,7 +29,7 @@ const manager = new ChromeManager({
 })
 
 try {
-  const instance = await manager.open('recover', { headless: true, ephemeral: true, ownerAgentId: 'agent-r' })
+  const { instance } = await manager.open('recover', { headless: true, ephemeral: true, ownerAgentId: 'agent-r' })
   assert.ok((await instance.pages()).length >= 1, 'browser starts with a page')
   const port = instance.port
   assert.ok(port !== undefined)

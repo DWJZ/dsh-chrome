@@ -11,7 +11,9 @@ kind: "plugin-reference"
 
 `dsh-chrome` 给 Harness agent 一批它能真正操控的浏览器。每个实例都是本插件自己起的 Chrome 进程，用独立的 profile 目录，所以不会碰你日常用的那个浏览器。工具经 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) 提供，一个实例一个 server。
 
-实例名由 agent 自己起，默认开带界面的那种（方便人登录），并且共享同一个 profile：除非用 `profile` 指定另一个、或用 `ephemeral: true` 表示不用 profile，否则都落在默认 profile 上。Chrome 一个 profile 目录同时只能有一个进程，所以一个 profile 在同一时刻只支撑一个运行中的实例；登录态在前后两次开的实例之间是通的。重名、或者要用的 profile 正被别的实例占着，都会被拒绝，并告诉你是谁占的。
+默认开带界面的那种（方便人登录），并且共享同一个 profile：除非用 `profile` 指定另一个、或用 `ephemeral: true` 表示不用 profile，否则都落在默认 profile 上。Chrome 一个 profile 目录同时只能有一个进程，所以一个 profile 在同一时刻只支撑一个运行中的实例；登录态在前后两次开的实例之间是通的。
+
+不带名字时开的就是 `default`，所以每个会话只要调 `chrome_browser_open` 就落到同一个浏览器上，再各自分 tab 用。同名且已经开着时，直接把这个实例返回（`reused: true`），不报错；只有当调用方显式点名了另一个 profile、而它和已开的那个不一致时才会被拒绝，并告诉你是谁占着。
 
 tab 按 agent 租借。多个会话可以同时操作同一个浏览器，但一个 tab 在同一时刻只归一个会话，直到它释放、关闭该 tab，或者会话结束。工具调用超时只让那一次调用失败，不会把 tab 收走。
 
@@ -46,7 +48,7 @@ pnpm dsh plugin --profile web add link:/path/to/dsh-chrome
 | 工具 | 用途 |
 |---|---|
 | `chrome_browser_list` | 列出实例、端口、tab 数与租约归属 |
-| `chrome_browser_open` | 起实例；`name` 由 agent 起，`profile` 指定共享 profile，`ephemeral` 用一次性 profile |
+| `chrome_browser_open` | 开 `default` 或指定名字的实例；同名已开则原样返回，`profile` 指定共享 profile，`ephemeral` 用一次性 profile |
 | `chrome_browser_close` | 关实例并释放它的租约 |
 | `chrome_list_tabs` | 列出 tab 的 id、标题、URL 与占用者 |
 | `chrome_search_tabs` | 按标题、URL 或两者过滤 tab |

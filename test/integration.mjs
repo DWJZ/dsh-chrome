@@ -47,14 +47,17 @@ const html = 'data:text/html,<html><body><input id=i><button id=b onclick="docum
 const manager = makeManager()
 try {
   // --- instances share one profile by default ------------------------------
-  const one = await manager.open('one', { headless: true, ownerAgentId: 'agent-a' })
+  const { instance: one } = await manager.open('one', { headless: true, ownerAgentId: 'agent-a' })
   assert.equal(one.profile, 'default')
   assert.equal(one.profileDir, sharedDir)
-  const two = await manager.open('two', { headless: true, ephemeral: true, ownerAgentId: 'agent-b' })
+  const { instance: two } = await manager.open('two', { headless: true, ephemeral: true, ownerAgentId: 'agent-b' })
   assert.equal(two.profile, null)
   assert.equal(two.profileDir, join(root, 'ephemeral', 'two'))
 
-  await assert.rejects(manager.open('one', { headless: true }), (error) => error.code === 'instance_exists')
+  // Opening an already-open name hands back that instance; sessions share it.
+  const again = await manager.open('one', { headless: true })
+  assert.equal(again.reused, true, 'the second open reuses the instance')
+  assert.equal(again.instance, one, 'the second open returns the same instance')
   // Chrome allows one process per profile directory.
   await assert.rejects(manager.open('three', { headless: true }), (error) => error.code === 'profile_busy')
   assert.equal((await manager.list()).length, 2)
@@ -103,7 +106,7 @@ try {
   assert.equal((await manager.list()).length, 0)
 
   // --- another instance finds the same profile and its logins --------------
-  const three = await manager.open('three', { headless: true })
+  const { instance: three } = await manager.open('three', { headless: true })
   assert.equal(three.profileDir, sharedDir)
   assert.equal((await three.pages()).length >= 1, true)
 
@@ -113,13 +116,13 @@ try {
   process.kill(state.pid, 'SIGKILL')
   for (let attempt = 0; attempt < 50 && isAlive(state.pid); attempt += 1) await sleep(100)
   assert.equal(manager.require('three').name, 'three')
-  const revived = await manager.open('three', { headless: true })
+  const { instance: revived } = await manager.open('three', { headless: true })
   assert.equal(revived.profileDir, sharedDir, 'the recovered instance keeps the profile')
   assert.ok((await revived.pages()).length >= 1, 'the recovered instance has a page')
   await manager.close('three')
 
   // --- orphan reaping: a new manager cleans leftover throwaway browsers ----
-  const orphan = await manager.open('ghost', { headless: true, ephemeral: true })
+  const { instance: orphan } = await manager.open('ghost', { headless: true, ephemeral: true })
   await orphan.pages()
   const ghostDir = join(root, 'ephemeral', 'ghost')
   const ghostState = await readInstanceState(ghostDir)

@@ -81,6 +81,14 @@ export interface OpenOptions {
 
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/
 
+/** Outcome of an open request. */
+export type OpenResult = {
+  /** The instance to use; the already-open one when the name was taken. */
+  instance: BrowserInstance
+  /** Whether an already-open instance was returned instead of starting one. */
+  reused: boolean
+}
+
 /** Owns every browser instance of this plugin. */
 export class ChromeManager {
   private readonly instances = new Map<string, BrowserInstance>()
@@ -91,18 +99,20 @@ export class ChromeManager {
   constructor(private readonly options: ManagerOptions) {}
 
   /**
-   * Open a browser, or fail when the name is taken.
+   * Open a browser. A name that is already open returns that instance, so
+   * several sessions reach one browser and split it into tabs.
    * @param name - agent-chosen instance name.
    * @param options - headless choice, profile choice, and owning agent.
-   * @returns the started instance.
-   * @throws {ChromeError} `instance_exists` for a live duplicate name, `profile_busy` when another
-   *   instance holds the profile, otherwise startup failures.
+   * @returns the instance and whether it was already open.
+   * @throws {ChromeError} `profile_busy` when this name is open on a different profile than
+   *   the caller explicitly asked for, otherwise startup failures.
    */
-  async open(name: string, options: OpenOptions): Promise<BrowserInstance> {
+  async open(name: string, options: OpenOptions): Promise<OpenResult> {
     if (!NAME_PATTERN.test(name)) {
       throw new ChromeError('instance_exists', `invalid instance name "${name}"; use letters, digits, - and _ (max 32)`)
     }
-    await this.releaseDead(name)
+    const existing = await this.reusable(name, options)
+    if (existing !== undefined) return { instance: existing, reused: true }
 
     const choice = this.profileChoice(options)
     const profileDir = this.profileDir(name, choice)
@@ -140,7 +150,7 @@ export class ChromeManager {
       this.profileOwners.delete(profileDir)
       throw error
     }
-    return instance
+    return { instance, reused: false }
   }
 
   /**
@@ -267,18 +277,36 @@ export class ChromeManager {
   }
 
   /**
-   * Drop a same-named instance whose browser is gone, so the name can be reused.
+   * Return an instance already open under this name, or drop the dead one.
+   *
+   * Opening the same name again is how several sessions reach one browser, so
+   * a live instance wins over the requested options; only a profile the caller
+   * named explicitly and that differs is a real conflict.
    * @param name - instance name the caller wants.
+   * @param options - requested profile choice.
+   * @returns the live instance, or undefined when the caller must start a new one.
+   * @throws {ChromeError} `profile_busy` when the caller named a different profile.
    */
-  private async releaseDead(name: string): Promise<void> {
+  private async reusable(name: string, options: OpenOptions): Promise<BrowserInstance | undefined> {
     const existing = this.instances.get(name)
-    if (existing === undefined) return
-    if (await existing.isAlive()) {
-      throw new ChromeError('instance_exists', `browser "${name}" already exists; pick another name or reuse it with browser="${name}"`)
+    if (existing === undefined) return undefined
+    if (!await existing.isAlive()) {
+      this.options.logger.info(`dsh-chrome: replacing browser "${name}", its process is gone`)
+      this.forget(existing)
+      await existing.stop().catch(() => {})
+      return undefined
     }
-    this.options.logger.info(`dsh-chrome: replacing browser "${name}", its process is gone`)
-    this.forget(existing)
-    await existing.stop().catch(() => {})
+    const explicit = options.ephemeral === true || (options.profile?.trim() ?? '') !== ''
+    const requested = options.ephemeral === true
+      ? null
+      : (options.profile?.trim() ?? '') === '' ? this.options.defaultProfile : options.profile?.trim() ?? ''
+    if (explicit && existing.profile !== requested) {
+      throw new ChromeError(
+        'profile_busy',
+        `browser "${name}" is already open on profile "${existing.profile ?? 'ephemeral'}"; close it, or pick another name`,
+      )
+    }
+    return existing
   }
 
   /** Resolve the requested profile choice. */

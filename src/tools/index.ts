@@ -101,9 +101,9 @@ export function registerTools(ctx: { tools: { register(definition: ToolDefinitio
 
   ctx.tools.register(defineTool({
     name: 'chrome_browser_open',
-    description: 'Open a dedicated Chrome instance. Headed by default. Instances share one profile by default, so logins carry across instances opened one after another; a profile can only back one running browser, because Chrome allows one process per profile directory.',
+    description: 'Open a browser. Without a name every session reaches the same instance, so callers split it into tabs instead of starting browsers. Opening an already-open name returns that instance with reused: true. Instances share one profile by default, and a profile can only back one running browser because Chrome allows one process per profile directory.',
     parameters: {
-      name: { type: 'string', description: `Instance name (letters, digits, - and _). Defaults to an unused name; "${DEFAULT_BROWSER}" is what tools use when no browser is given.` },
+      name: { type: 'string', description: `Instance name (letters, digits, - and _). Defaults to "${DEFAULT_BROWSER}", which is also the browser every other tool uses when none is named.` },
       headless: { type: 'boolean', description: 'Start without a window. Defaults to false (headed).' },
       profile: { type: 'string', description: 'Shared profile name (letters, digits, - and _). Defaults to the profile configured for this plugin.' },
       ephemeral: { type: 'boolean', description: 'Use a throwaway profile deleted with the instance instead of any shared one.' },
@@ -111,15 +111,14 @@ export function registerTools(ctx: { tools: { register(definition: ToolDefinitio
     output: JSON_OUTPUT,
     async execute(args, exec) {
       const headless = args.headless ?? false
-      let name = args.name?.trim()
-      if (name === undefined || name === '') name = await freeName(manager)
-      const instance = await manager.open(name, {
+      const name = args.name?.trim() === undefined || args.name.trim() === '' ? DEFAULT_BROWSER : args.name.trim()
+      const { instance, reused } = await manager.open(name, {
         headless,
         ...(args.profile === undefined ? {} : { profile: args.profile }),
         ...(args.ephemeral === undefined ? {} : { ephemeral: args.ephemeral }),
         ...(exec.agent === undefined ? {} : { ownerAgentId: exec.agent.id }),
       })
-      return { name: instance.name, headless: instance.headless, profile: instance.profile, port: instance.port ?? null }
+      return { name: instance.name, headless: instance.headless, profile: instance.profile, port: instance.port ?? null, reused }
     },
   }))
 
@@ -415,14 +414,6 @@ async function tabsOf(instance: BrowserInstance): Promise<TabView[]> {
 
 function tabView(instance: BrowserInstance, pageId: number, title: string, url: string): TabView {
   return { tabId: pageId, title, url, owner: instance.leases.owner(pageId) ?? null }
-}
-
-async function freeName(manager: ChromeManager): Promise<string> {
-  const taken = new Set((await manager.list()).map((summary) => summary.name))
-  for (let index = 1; ; index += 1) {
-    const candidate = index === 1 ? DEFAULT_BROWSER : `${DEFAULT_BROWSER}-${index}`
-    if (!taken.has(candidate)) return candidate
-  }
 }
 
 /** Re-exported so callers can render failures consistently. */
