@@ -187,7 +187,12 @@ export class ChromeManager {
       if (headless !== true) continue
       const state = await readInstanceState(dir)
       if (state !== undefined) await terminateProcess(state.pid)
-      await rm(dir, { recursive: true, force: true })
+      try {
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      } catch (error) {
+        this.options.logger.warn(`dsh-chrome: could not remove leftover profile ${dir}: ${String(error)}`)
+        continue
+      }
       reaped.push(entry.name)
     }
     return reaped

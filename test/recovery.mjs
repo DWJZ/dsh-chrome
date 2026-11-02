@@ -52,5 +52,5 @@ try {
   console.log('RECOVERY OK')
 } finally {
   await manager.dispose().catch(() => {})
-  rmSync(root, { recursive: true, force: true })
+  try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) } catch { /* a Chrome helper may still hold the directory */ }
 }

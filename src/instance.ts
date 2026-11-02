@@ -185,7 +185,15 @@ export class BrowserInstance {
     this.chrome = undefined
     if (engine !== undefined) await engine.close()
     if (chrome !== undefined) await chrome.close()
-    if (this.options.headless) await rm(this.options.profileDir, { recursive: true, force: true })
+    if (this.options.headless) {
+      try {
+        // Chrome helpers can still be flushing files right after the main
+        // process exits, so a single removal races with them.
+        await rm(this.options.profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      } catch (error) {
+        this.options.logger.warn(`dsh-chrome: could not remove ${this.options.profileDir}: ${String(error)}`)
+      }
+    }
   }
 
   private requireEngine(): McpEngine {

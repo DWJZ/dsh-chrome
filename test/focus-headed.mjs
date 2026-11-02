@@ -47,5 +47,5 @@ try {
   }
 } finally {
   await chrome?.close().catch(() => {})
-  rmSync(profileDir, { recursive: true, force: true })
+  try { rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) } catch { /* a Chrome helper may still hold the directory */ }
 }
