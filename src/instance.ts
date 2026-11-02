@@ -106,9 +106,13 @@ export class BrowserInstance {
    */
   async pages(): Promise<McpPage[]> {
     const engine = this.requireEngine()
-    const pages = await engine.listPages(this.options.toolCallTimeoutMs)
-    this.leases.prune(pages.map((page) => page.pageId))
-    return pages
+    try {
+      const pages = await engine.listPages(this.options.toolCallTimeoutMs)
+      this.leases.prune(pages.map((page) => page.pageId))
+      return pages
+    } catch (error) {
+      return this.recover(error)
+    }
   }
 
   /**
@@ -126,18 +130,27 @@ export class BrowserInstance {
         timeoutMs: this.options.toolCallTimeoutMs,
       })
     } catch (error) {
-      if (!isTransportFailure(error)) throw error
-      // The server process died: restart it for later calls, but this call's
-      // page ids no longer describe the same tabs, so report rather than retry.
-      await engine.close().catch(() => {})
-      this.engine = undefined
-      this.leases.prune([])
-      await this.startEngine().catch(() => {})
-      throw new ChromeError(
-        'browser_down',
-        `browser "${this.options.name}": the MCP server restarted, so page ids changed; call chrome_list_tabs again`,
-      )
+      return this.recover(error)
     }
+  }
+
+  /**
+   * Restart a dead MCP server for later calls, then rethrow this call's failure.
+   * Page ids do not survive the restart, so the call cannot be retried silently.
+   * @param error - the failure to translate or rethrow.
+   * @returns never.
+   */
+  private async recover(error: unknown): Promise<never> {
+    if (!isTransportFailure(error)) throw error
+    const engine = this.engine
+    this.engine = undefined
+    this.leases.prune([])
+    await engine?.close().catch(() => {})
+    await this.startEngine().catch(() => {})
+    throw new ChromeError(
+      'browser_down',
+      `browser "${this.options.name}": the MCP server restarted, so page ids changed; call chrome_list_tabs again`,
+    )
   }
 
   /** Start the MCP engine against the running browser. */
@@ -190,7 +203,21 @@ export class BrowserInstance {
  * @returns true when the transport, not the tool, failed.
  */
 function isTransportFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
   if (error instanceof ChromeError) return false
-  return /connection closed|not connected|transport closed|socket hang up|EPIPE|ECONNRESET/i.test(error.message)
+  const code = readStringProperty(error, 'code')
+  if (code !== undefined && /CONNECTION_CLOSED|CONNECTION_LOST|EPIPE|ECONNRESET|EPROTO/i.test(code)) return true
+  const message = error instanceof Error ? error.message : String(error)
+  return /connection closed|not connected|transport closed|socket hang up|EPIPE|ECONNRESET/i.test(message)
+}
+
+/**
+ * Read one string property from an unknown thrown value.
+ * @param value - candidate error.
+ * @param key - property name.
+ * @returns the property when it is a string.
+ */
+function readStringProperty(value: unknown, key: string): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const property = (value as Record<string, unknown>)[key]
+  return typeof property === 'string' ? property : undefined
 }

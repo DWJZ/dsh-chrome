@@ -32,7 +32,7 @@ try {
   }, logger)
   console.log(`chrome on port ${chrome.endpoint.port}, pid ${chrome.pid}`)
 
-  engine = await McpEngine.start({ port: chrome.endpoint.port, timeoutMs: 30000 })
+  engine = await McpEngine.start({ port: chrome.endpoint.port, timeoutMs: 30000, workspaceDirs: [profileDir] })
   const pages = await engine.listPages(30000)
   assert(pages.length >= 1, 'launch creates one page')
   console.log('pages:', pages.map((page) => `${page.pageId}:${page.url}`).join(', '))
