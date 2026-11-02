@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write plugins/dsh-chrome/README.md
+/:
+  en: 4a00e4c20b96f777
+  zh: 4996742c5e949cc3
+/dsh-chrome:
+  en: ed78bf28ef8a2ce1
+  zh: 979159544064dadf
+/dsh-chrome/summary:
+  en: 596b6731b9488b42
+  zh: 02c2820bdb573051
+/dsh-chrome/install:
+  en: 3786b0afd2912c04
+  zh: 43dc5c117c7a152b
+/dsh-chrome/configure:
+  en: cbd1b4273a71dbf9
+  zh: 76f00efa5adc1c99
+/dsh-chrome/tools:
+  en: e3ed1ffe481bffe9
+  zh: ad3eddc0c87fc9b9
+/dsh-chrome/behavior:
+  en: cec4a9331fb9d4f2
+  zh: 1ad48cfa698d053b
+/dsh-chrome/known-limitations:
+  en: 55f173efc7c270c0
+  zh: 7034b09f2ca3ddee
+/dsh-chrome/development:
+  en: e36b6f2e04361450
+  zh: d16683933519e084
