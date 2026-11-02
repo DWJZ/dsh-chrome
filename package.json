@@ -1,0 +1,66 @@
+{
+  "name": "dsh-chrome",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 浏览器插件：统一起停专用 Chrome 实例，经 chrome-devtools-mcp 暴露 tab 级工具，多个会话可并发操作不同 tab。 / Chrome instances for DeepSeek Harness: one dedicated browser per name, chrome-devtools-mcp tools, and tab-level leases so concurrent sessions never share a tab.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DWJZ/dsh-chrome.git"
+  },
+  "homepage": "https://github.com/DWJZ/dsh-chrome#readme",
+  "main": "lib/index.mjs",
+  "exports": {
+    ".": "./lib/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx/esm test/run.mjs"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh-plugin",
+    "chrome",
+    "browser"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-home-paths": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.2.0",
+    "chrome-devtools-mcp": "^1.9.0",
+    "chrome-launcher": "^1.2.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../vendor/cordis",
+    "@deepseek-ai/dsh-agent": "link:../../packages/core/agent",
+    "@deepseek-ai/dsh-home-paths": "link:../../packages/util/home-paths",
+    "@deepseek-ai/dsh-tools": "link:../../packages/core/tools",
+    "@deepseek-ai/schemastery": "link:../../vendor/schemastery",
+    "@types/node": "^26.6.3",
+    "tsdown": "^0.23.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0"
+  }
+}
